@@ -53,10 +53,16 @@ jobs:
       - name: Configure VS2005 environment
         shell: pwsh
         run: |
-          $cl = Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe |
+          $clCandidates = Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe
+          $clCandidates | ForEach-Object { "Compiler candidate: $($_.FullName)" }
+          $cl = $clCandidates |
             Where-Object { $_.FullName -match '\\VC\\bin\\cl.exe$' } |
             Select-Object -First 1
-          if (!$cl) { throw "VS2005 cl.exe not found" }
+          if (!$cl) { $cl = $clCandidates | Select-Object -First 1 }
+          if (!$cl) {
+            Get-ChildItem C:\VS2005 -Depth 3 | Select-Object -First 300 -ExpandProperty FullName
+            throw "VS2005 cl.exe not found"
+          }
 
           $vcBin = $cl.Directory.FullName
           $vcRoot = Split-Path $vcBin
