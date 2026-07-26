@@ -53,6 +53,10 @@ jobs:
       - name: Configure VS2005 environment
         shell: pwsh
         run: |
+          if (!(Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe)) {
+            New-Item -ItemType Directory -Force C:\VS2005\CompilerPayload | Out-Null
+            7z x C:\VS2005\Ixpvc.exe -oC:\VS2005\CompilerPayload -y
+          }
           $clCandidates = Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe
           $clCandidates | ForEach-Object { "Compiler candidate: $($_.FullName)" }
           $cl = $clCandidates |
