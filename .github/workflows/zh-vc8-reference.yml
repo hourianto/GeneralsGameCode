@@ -71,8 +71,9 @@ jobs:
             throw "Hash mismatch for LessMSI"
           }
           Expand-Archive $lessMsiZip -DestinationPath "$root\lessmsi"
-          & "$root\lessmsi\lessmsi.exe" x "$root\payload\vcsetup.msi" "$root\compiler"
+          & "$root\lessmsi\lessmsi.exe" x "$root\payload\vcsetup.msi"
           if ($LASTEXITCODE -ne 0) { throw "LessMSI extraction failed" }
+          Move-Item "$PWD\vcsetup" "$root\compiler"
 
           $sdkCommit = "001c4bafdcf2ef4b474d693acccd35a91e848f40"
           $sdkZip = "$downloads\msvc600.zip"
