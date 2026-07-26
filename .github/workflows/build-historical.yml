@@ -183,31 +183,34 @@ jobs:
             "-DRTS_BUILD_ZEROHOUR=${{ matrix.game == 'GeneralsMD' && 'ON' || 'OFF' }}",
             "-DRTS_BUILD_GENERALS=${{ matrix.game == 'Generals' && 'ON' || 'OFF' }}",
             "-DRTS_BUILD_CORE_TOOLS=ON",
-            "-DRTS_BUILD_${{ matrix.game == 'Generals' && 'GENERALS' || 'ZEROHOUR' }}_TOOLS=ON"
+            "-DRTS_BUILD_${{ matrix.game == 'Generals' && 'GENERALS' || 'ZEROHOUR' }}_TOOLS=ON",
+            "-DCMAKE_C_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /Zi",
+            "-DCMAKE_CXX_FLAGS_RELEASE=/O2 /Ob2 /DNDEBUG /GX /Zi",
+            "-DCMAKE_EXE_LINKER_FLAGS_RELEASE=/DEBUG /OPT:REF /OPT:ICF /MAP"
           )
           cmake --preset vc6 $buildFlags
 
       - name: Build with CMake
         shell: pwsh
         run: |
-          cmake --build --preset vc6
+          $target = "${{ matrix.game == 'GeneralsMD' && 'z_generals' || 'g_generals' }}"
+          cmake --build build/vc6 --target $target
 
       - name: Collect Artifacts
         shell: pwsh
         run: |
           $buildDir = "build\vc6"
-          $artifactsDir = New-Item -ItemType Directory -Force -Path "$buildDir\${{ matrix.game }}\artifacts"
+          $artifactsDir = New-Item -ItemType Directory -Force -Path "artifacts\${{ matrix.game }}"
 
-          $files = Get-ChildItem -Path "$buildDir\Core","$buildDir\${{ matrix.game }}" -File |
-            Where-Object { $_.Extension -in @(".exe", ".dll", ".pdb") }
-
-          $files | Move-Item -Destination $artifactsDir -Force
+          robocopy $buildDir $artifactsDir *.exe *.dll *.pdb *.map /S
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          $global:LASTEXITCODE = 0
 
       - name: Upload Artifact
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: ${{ matrix.game }}-vc6-${{ needs.prepare.outputs.short_sha }}
-          path: build\vc6\${{ matrix.game }}\artifacts
+          path: artifacts\${{ matrix.game }}
           retention-days: 90
 
   create-release:
