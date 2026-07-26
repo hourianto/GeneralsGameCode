@@ -56,6 +56,13 @@ jobs:
           if (!(Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe)) {
             New-Item -ItemType Directory -Force C:\VS2005\CompilerPayload | Out-Null
             7z x C:\VS2005\Ixpvc.exe -oC:\VS2005\CompilerPayload -y
+            $msi = "C:\VS2005\CompilerPayload\vcsetup.msi"
+            $arguments = "/a `"$msi`" TARGETDIR=C:\VS2005\Compiler /qn /norestart /l*v C:\VS2005\vcsetup-admin.log"
+            $installer = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
+            if ($installer.ExitCode -ne 0) {
+              Get-Content C:\VS2005\vcsetup-admin.log -Tail 200
+              throw "VS2005 administrative extraction failed: $($installer.ExitCode)"
+            }
           }
           $clCandidates = Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe
           $clCandidates | ForEach-Object { "Compiler candidate: $($_.FullName)" }
@@ -96,7 +103,7 @@ jobs:
       - name: Configure optimized symbol build
         shell: pwsh
         run: |
-          cmake -S . -B build/vc8 -G "NMake Makefiles" `
+          cmake -S . -B build/vc8 -G Ninja `
             -DGENZH_BUILD_ZEROHOUR=ON `
             -DGENZH_BUILD_GENERALS=OFF `
             -DCMAKE_BUILD_TYPE=Release `
