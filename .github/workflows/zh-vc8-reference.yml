@@ -111,7 +111,10 @@ jobs:
               $dependency = Get-ChildItem "$root\compiler","$root\media" -Recurse -Filter $_ |
                 Select-Object -First 1
               if (!$dependency) { throw "Missing VC8 dependency $_" }
-              Copy-Item $dependency.FullName $vcBin -Force
+              $destination = Join-Path $vcBin $_
+              if ($dependency.FullName -ne $destination) {
+                Copy-Item $dependency.FullName $destination -Force
+              }
             }
 
           $windowsHeader = Get-ChildItem "$root\sdk" -Recurse -Filter WINDOWS.H | Select-Object -First 1
