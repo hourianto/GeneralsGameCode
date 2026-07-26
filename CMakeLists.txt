@@ -112,6 +112,10 @@ add_library(gz_config INTERFACE)
 
 target_compile_options(gz_config INTERFACE ${GENZH_FLAGS})
 
+if(MSVC_VERSION EQUAL 1400)
+    target_compile_options(gz_config INTERFACE /FI${CMAKE_SOURCE_DIR}/Dependencies/Utility/Utility/VC8MathCompat.h)
+endif()
+
 target_compile_definitions(gz_config INTERFACE $<IF:$<CONFIG:Debug>,_DEBUG WWDEBUG DEBUG,_RELEASE>)
 
 # This disables a lot of warnings steering developers to use windows only functions/function names.
