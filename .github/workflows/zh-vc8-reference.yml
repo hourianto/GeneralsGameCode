@@ -60,8 +60,8 @@ jobs:
             $arguments = "/a `"$msi`" TARGETDIR=C:\VS2005\Compiler /qn /norestart /l*v C:\VS2005\vcsetup-admin.log"
             $installer = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
             if ($installer.ExitCode -ne 0) {
-              Get-Content C:\VS2005\vcsetup-admin.log -Tail 200
-              throw "VS2005 administrative extraction failed: $($installer.ExitCode)"
+              Get-Content C:\VS2005\vcsetup-admin.log -Tail 80
+              Write-Warning "VS2005 administrative extraction returned $($installer.ExitCode); checking extracted files"
             }
           }
           $clCandidates = Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe
