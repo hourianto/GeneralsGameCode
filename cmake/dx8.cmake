@@ -5,3 +5,7 @@ FetchContent_Declare(
 )
 
 FetchContent_MakeAvailable(dx8)
+
+if(MSVC AND MSVC_VERSION EQUAL 1400)
+    target_include_directories(d3d8lib INTERFACE ${dx8_SOURCE_DIR}/extra)
+endif()

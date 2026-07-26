@@ -975,7 +975,7 @@ void DazzleRenderObjClass::Render(RenderInfoClass & rinfo)
 
 			unsigned time_ms=WW3D::Get_Frame_Time();
 			if (time_ms==0) time_ms=1;
-			float weight=pow(params->ic.history_weight,time_ms);
+			float weight=pow(params->ic.history_weight,static_cast<float>(time_ms));
 
 			if (dazzle_intensity>0.0f) {
 				visibility = _VisibilityHandler->Compute_Dazzle_Visibility(rinfo,this,loc);
