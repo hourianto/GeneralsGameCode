@@ -100,12 +100,18 @@ jobs:
           "INCLUDE=$root\VC98\ATL\INCLUDE;$root\VC98\INCLUDE;$root\VC98\MFC\INCLUDE;$env:INCLUDE" >> $env:GITHUB_ENV
           "LIB=$root\VC98\LIB;$root\VC98\MFC\LIB;$env:LIB" >> $env:GITHUB_ENV
 
+      - name: Cache historical build tree
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: build/vc6
+          key: zh-reference-vc6-${{ inputs.reference_commit }}-gsi32-v1
+
       - name: Configure release build with complete symbols
         shell: pwsh
         run: |
           cmake --preset vc6 `
-            -DCMAKE_C_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /Zi" `
-            -DCMAKE_CXX_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /GX /Zi" `
+            -DCMAKE_C_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /Zi /DGSI_MAX_INTEGRAL_BITS=32" `
+            -DCMAKE_CXX_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /GX /Zi /DGSI_MAX_INTEGRAL_BITS=32" `
             -DCMAKE_EXE_LINKER_FLAGS_RELEASE="/DEBUG /OPT:REF /OPT:ICF /MAP:GeneralsMD-reference.map /PDB:GeneralsMD-reference.pdb"
 
       - name: Build Zero Hour reference
