@@ -1,0 +1,161 @@
+name: Build pristine Zero Hour reference
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference_commit:
+        description: Commit containing the historical build scaffolding
+        required: true
+        default: 994093efc0540c036c5b0ec300d28f8d0deab7aa
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  EA_COMMIT: 0a05454d8574207440a5fb15241b98ad0b435590
+
+jobs:
+  provenance:
+    runs-on: ubuntu-latest
+    outputs:
+      short_sha: ${{ steps.commit.outputs.short_sha }}
+    steps:
+      - name: Check out historical source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.reference_commit }}
+          fetch-depth: 0
+
+      - name: Verify original C and C++ sources are pristine
+        shell: bash
+        run: |
+          git diff --name-status "$EA_COMMIT" "${{ inputs.reference_commit }}" -- '*.c' '*.cc' '*.cpp' '*.cxx' '*.h' '*.hh' '*.hpp' > source-diff.txt
+          cat source-diff.txt
+          if awk '$1 != "A" || $2 !~ /^Dependencies\//' source-diff.txt | grep -q .; then
+            echo "Historical commit changes an original source file" >&2
+            exit 1
+          fi
+
+      - name: Record commit metadata
+        id: commit
+        shell: bash
+        run: |
+          short_sha=$(git rev-parse --short=7 "${{ inputs.reference_commit }}")
+          echo "short_sha=$short_sha" >> "$GITHUB_OUTPUT"
+          {
+            echo "EA_COMMIT=$EA_COMMIT"
+            echo "REFERENCE_COMMIT=${{ inputs.reference_commit }}"
+            git show -s --format='REFERENCE_DATE=%cI%nREFERENCE_SUBJECT=%s' "${{ inputs.reference_commit }}"
+          } > provenance.txt
+
+      - name: Upload provenance
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: zh-reference-provenance-${{ steps.commit.outputs.short_sha }}
+          path: |
+            provenance.txt
+            source-diff.txt
+          retention-days: 90
+
+  build-vc6:
+    needs: provenance
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Check out historical source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.reference_commit }}
+          fetch-depth: 0
+
+      - name: Cache VC6 SP6
+        id: cache-vc6
+        uses: actions/cache@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: C:\VC6
+          key: vc6-permanent-cache-v2
+
+      - name: Download pinned VC6 SP6 toolchain
+        if: steps.cache-vc6.outputs.cache-hit != 'true'
+        shell: pwsh
+        env:
+          EXPECTED_HASH: D0EE1F6DCEF7DB3AD703120D9FB4FAD49EBCA28F44372E40550348B1C00CA583
+          VC6_COMMIT: 001c4bafdcf2ef4b474d693acccd35a91e848f40
+        run: |
+          Invoke-WebRequest -Uri "https://github.com/itsmattkc/MSVC600/archive/$env:VC6_COMMIT.zip" -OutFile vc6.zip
+          if ((Get-FileHash vc6.zip -Algorithm SHA256).Hash -ne $env:EXPECTED_HASH) { throw "VC6 archive hash mismatch" }
+          Expand-Archive vc6.zip -DestinationPath C:\VC6
+          Move-Item "C:\VC6\MSVC600-$env:VC6_COMMIT" C:\VC6\VC6SP6
+
+      - name: Configure VC6 environment
+        shell: pwsh
+        run: |
+          $root = "C:\VC6\VC6SP6"
+          "VSCommonDir=$root\Common" >> $env:GITHUB_ENV
+          "MSDevDir=$root\Common\msdev98" >> $env:GITHUB_ENV
+          "MSVCDir=$root\VC98" >> $env:GITHUB_ENV
+          "VcOsDir=WINNT" >> $env:GITHUB_ENV
+          "PATH=$root\Common\msdev98\BIN;$root\VC98\BIN;$root\Common\TOOLS\WINNT;$root\Common\TOOLS;$env:PATH" >> $env:GITHUB_ENV
+          "INCLUDE=$root\VC98\ATL\INCLUDE;$root\VC98\INCLUDE;$root\VC98\MFC\INCLUDE;$env:INCLUDE" >> $env:GITHUB_ENV
+          "LIB=$root\VC98\LIB;$root\VC98\MFC\LIB;$env:LIB" >> $env:GITHUB_ENV
+
+      - name: Configure release build with complete symbols
+        shell: pwsh
+        run: |
+          cmake --preset vc6 `
+            -DCMAKE_C_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /Zi" `
+            -DCMAKE_CXX_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /GX /Zi" `
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="/DEBUG /OPT:REF /OPT:ICF /MAP:GeneralsMD-reference.map /PDB:GeneralsMD-reference.pdb"
+
+      - name: Build Zero Hour reference
+        shell: pwsh
+        run: cmake --build build/vc6 --target z_generals
+
+      - name: Collect reference artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          robocopy build\vc6 artifacts *.exe *.dll *.pdb *.map *.lib /S
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          $compilerOutput = & cl 2>&1
+          $compilerOutput | Out-File artifacts\compiler-version.txt
+          $global:LASTEXITCODE = 0
+          git show -s --format="%H%n%cI%n%s" "${{ inputs.reference_commit }}" | Out-File artifacts\reference-commit.txt
+          Get-ChildItem artifacts -Recurse -File | Get-FileHash -Algorithm SHA256 | ForEach-Object { "$($_.Hash)  $($_.Path.Substring((Resolve-Path artifacts).Path.Length + 1))" } | Out-File artifacts\SHA256SUMS.txt
+
+      - name: Upload VC6 reference
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: zh-reference-vc6-${{ needs.provenance.outputs.short_sha }}
+          path: artifacts
+          retention-days: 90
+
+  release:
+    needs: [provenance, build-vc6]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download VC6 artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          name: zh-reference-vc6-${{ needs.provenance.outputs.short_sha }}
+          path: vc6
+
+      - name: Package reference
+        shell: bash
+        run: zip -r "zh-reference-vc6-${{ needs.provenance.outputs.short_sha }}.zip" vc6
+
+      - name: Publish persistent prerelease
+        uses: softprops/action-gh-release@a06a81a03ee405af7f2048a818ed3f03bbf83c7d47b13c3 # v2.5.0
+        with:
+          tag_name: zh-reference-vc6-${{ needs.provenance.outputs.short_sha }}
+          name: Zero Hour VC6 reference ${{ needs.provenance.outputs.short_sha }}
+          prerelease: true
+          make_latest: false
+          body: |
+            Symbol-bearing VC6 reference build for reverse-engineering lineage matching.
+
+            EA source commit: `${{ env.EA_COMMIT }}`
+            Build-scaffolding commit: `${{ inputs.reference_commit }}`
+            Original C/C++ source modifications are rejected by the provenance job.
+          files: zh-reference-vc6-${{ needs.provenance.outputs.short_sha }}.zip
