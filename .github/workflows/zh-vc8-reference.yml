@@ -141,7 +141,7 @@ jobs:
           #include <windows.h>
           int main(void) { return GetCurrentProcessId() == 0; }
           '@ | Set-Content -Encoding Ascii vc8-pdb-smoke.cpp
-          cl /nologo /O2 /Zi /MD vc8-pdb-smoke.cpp /Fe:vc8-pdb-smoke.exe /link /DEBUG /PDB:vc8-pdb-smoke.pdb
+          cl /nologo /O2 /Zi /MD vc8-pdb-smoke.cpp /Fevc8-pdb-smoke.exe /link /DEBUG /PDB:vc8-pdb-smoke.pdb
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           if (!(Test-Path vc8-pdb-smoke.pdb)) { throw "VC8 did not produce a PDB" }
 
