@@ -23,82 +23,133 @@ jobs:
           ref: ${{ inputs.reference_ref }}
           fetch-depth: 0
 
-      - name: Restore VS2005 toolchain
+      - name: Restore VC8 reference toolchain
         id: cache-vc8
         uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
         with:
-          path: C:\VS2005
-          key: vs2005-express-c388866075c1eea0de9e4455e5b46e0aa8f1cd73-v1
+          path: C:\VC8ReferenceToolchain
+          key: vc8-reference-50727.42-msvc600-sdk-v3
 
-      - name: Download pinned VS2005 Express toolchain
+      - name: Prepare pinned VC8 compiler and Win32 SDK
         if: steps.cache-vc8.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          $commit = "c388866075c1eea0de9e4455e5b46e0aa8f1cd73"
-          $base = "https://raw.githubusercontent.com/thepwrtank18/msvc2005/$commit"
+          $ErrorActionPreference = "Stop"
+          $root = "C:\VC8ReferenceToolchain"
+          $downloads = "$root\downloads"
+          New-Item -ItemType Directory -Force $downloads | Out-Null
+
+          $vc8Commit = "c388866075c1eea0de9e4455e5b46e0aa8f1cd73"
+          $vc8Base = "https://raw.githubusercontent.com/thepwrtank18/msvc2005/$vc8Commit"
+          $vc8BlobHashes = @(
+            "710c4611b34160310c4ab89fa78224c97e82341a",
+            "90de0edc7f07401fd32333ff55a5fb47958054c5",
+            "a4a7c09ebc33462fb0772f4116af145d12be69bf",
+            "1cc39c066fae24da82bbed84e5e6ac68e3e10b90",
+            "cb17a202205240544ba590281c70fd7f1fe14163"
+          )
           1..5 | ForEach-Object {
             $part = "vs2005_express.7z.{0:D3}" -f $_
-            Invoke-WebRequest -Uri "$base/$part" -OutFile $part
-          }
-          New-Item -ItemType Directory -Force C:\VS2005 | Out-Null
-          7z x vs2005_express.7z.001 -oC:\VS2005 -y
-
-      - name: Save VS2005 toolchain
-        if: steps.cache-vc8.outputs.cache-hit != 'true'
-        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
-        with:
-          path: C:\VS2005
-          key: vs2005-express-c388866075c1eea0de9e4455e5b46e0aa8f1cd73-v1
-
-      - name: Configure VS2005 environment
-        shell: pwsh
-        run: |
-          if (!(Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe)) {
-            New-Item -ItemType Directory -Force C:\VS2005\CompilerPayload | Out-Null
-            7z x C:\VS2005\Ixpvc.exe -oC:\VS2005\CompilerPayload -y
-            $msi = "C:\VS2005\CompilerPayload\vcsetup.msi"
-            $arguments = "/a `"$msi`" TARGETDIR=C:\VS2005\Compiler /qn /norestart /l*v C:\VS2005\vcsetup-admin.log"
-            $installer = Start-Process msiexec.exe -ArgumentList $arguments -Wait -PassThru
-            if ($installer.ExitCode -ne 0) {
-              Get-Content C:\VS2005\vcsetup-admin.log -Tail 80
-              Write-Warning "VS2005 administrative extraction returned $($installer.ExitCode); checking extracted files"
+            $partPath = "$downloads\$part"
+            Invoke-WebRequest -Uri "$vc8Base/$part" -OutFile $partPath
+            $actual = (git hash-object $partPath).Trim()
+            if ($actual -ne $vc8BlobHashes[$_ - 1]) {
+              throw "Hash mismatch for $part"
             }
           }
-          $clCandidates = Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe
-          $clCandidates | ForEach-Object { "Compiler candidate: $($_.FullName)" }
-          $cl = $clCandidates |
-            Where-Object { $_.FullName -match '\\VC\\bin\\cl.exe$' } |
-            Select-Object -First 1
-          if (!$cl) { $cl = $clCandidates | Select-Object -First 1 }
-          if (!$cl) {
-            Get-ChildItem C:\VS2005 -Depth 3 | Select-Object -First 300 -ExpandProperty FullName
-            throw "VS2005 cl.exe not found"
+
+          New-Item -ItemType Directory -Force "$root\media" | Out-Null
+          7z x "$downloads\vs2005_express.7z.001" "-o$root\media" -y | Out-Host
+          New-Item -ItemType Directory -Force "$root\payload" | Out-Null
+          7z x "$root\media\Ixpvc.exe" "-o$root\payload" -y | Out-Host
+
+          $lessMsiUrl = "https://github.com/activescott/lessmsi/releases/download/v2.12.9/lessmsi-v2.12.9.zip"
+          $lessMsiZip = "$downloads\lessmsi-v2.12.9.zip"
+          Invoke-WebRequest -Uri $lessMsiUrl -OutFile $lessMsiZip
+          $lessMsiHash = (Get-FileHash $lessMsiZip -Algorithm SHA256).Hash
+          if ($lessMsiHash -ne "5B4E187E74B184AD3A63CCF06C3D17DAE2B8C4B6C298A996DBD51A9F6DB29D21") {
+            throw "Hash mismatch for LessMSI"
           }
+          Expand-Archive $lessMsiZip -DestinationPath "$root\lessmsi"
+          & "$root\lessmsi\lessmsi.exe" x "$root\payload\vcsetup.msi" "$root\compiler"
+          if ($LASTEXITCODE -ne 0) { throw "LessMSI extraction failed" }
+
+          $sdkCommit = "001c4bafdcf2ef4b474d693acccd35a91e848f40"
+          $sdkZip = "$downloads\msvc600.zip"
+          Invoke-WebRequest -Uri "https://github.com/itsmattkc/MSVC600/archive/$sdkCommit.zip" -OutFile $sdkZip
+          $sdkHash = (Get-FileHash $sdkZip -Algorithm SHA256).Hash
+          if ($sdkHash -ne "D0EE1F6DCEF7DB3AD703120D9FB4FAD49EBCA28F44372E40550348B1C00CA583") {
+            throw "Hash mismatch for MSVC600 SDK"
+          }
+          Expand-Archive $sdkZip -DestinationPath "$root\sdk"
+
+          if (!(Get-ChildItem "$root\compiler" -Recurse -Filter cl.exe | Select-Object -First 1)) {
+            throw "VC8 compiler extraction did not produce cl.exe"
+          }
+          if (!(Get-ChildItem "$root\sdk" -Recurse -Filter WINDOWS.H | Select-Object -First 1)) {
+            throw "Win32 SDK extraction did not produce WINDOWS.H"
+          }
+
+      - name: Configure and verify VC8 environment
+        shell: pwsh
+        run: |
+          $ErrorActionPreference = "Stop"
+          $root = "C:\VC8ReferenceToolchain"
+          $cl = Get-ChildItem "$root\compiler" -Recurse -Filter cl.exe |
+            Where-Object { $_.FullName -match '\\VC\\bin\\cl\.exe$' } |
+            Select-Object -First 1
+          if (!$cl) {
+            $cl = Get-ChildItem "$root\compiler" -Recurse -Filter cl.exe | Select-Object -First 1
+          }
+          if (!$cl) { throw "VC8 cl.exe not found" }
 
           $vcBin = $cl.Directory.FullName
           $vcRoot = Split-Path $vcBin
-          $windowsHeader = Get-ChildItem C:\VS2005 -Recurse -Filter windows.h |
-            Select-Object -First 1
-          $kernelLibrary = Get-ChildItem C:\VS2005 -Recurse -Filter kernel32.lib |
-            Select-Object -First 1
-          $resourceCompiler = Get-ChildItem C:\VS2005 -Recurse -Filter rc.exe |
-            Select-Object -First 1
-          if (!$windowsHeader -or !$kernelLibrary -or !$resourceCompiler) {
-            throw "VS2005 archive is missing the Windows SDK"
-          }
+          @("mspdb80.dll", "mspdbcore.dll", "msobj80.dll", "mspdbsrv.exe", "msvcr80.dll", "msvcp80.dll") |
+            ForEach-Object {
+              $dependency = Get-ChildItem "$root\compiler","$root\media" -Recurse -Filter $_ |
+                Select-Object -First 1
+              if (!$dependency) { throw "Missing VC8 dependency $_" }
+              Copy-Item $dependency.FullName $vcBin -Force
+            }
 
+          $windowsHeader = Get-ChildItem "$root\sdk" -Recurse -Filter WINDOWS.H | Select-Object -First 1
+          $kernelLibrary = Get-ChildItem "$root\sdk" -Recurse -Filter KERNEL32.LIB | Select-Object -First 1
+          if (!$windowsHeader -or !$kernelLibrary) { throw "Win32 SDK files not found" }
           $sdkInclude = $windowsHeader.Directory.FullName
           $sdkLib = $kernelLibrary.Directory.FullName
-          $rcBin = $resourceCompiler.Directory.FullName
-          "PATH=$vcBin;$rcBin;$env:PATH" >> $env:GITHUB_ENV
-          "INCLUDE=$vcRoot\include;$sdkInclude;$env:INCLUDE" >> $env:GITHUB_ENV
-          "LIB=$vcRoot\lib;$sdkLib;$env:LIB" >> $env:GITHUB_ENV
+
+          "VC8_BIN=$vcBin" >> $env:GITHUB_ENV
+          "VC8_ROOT=$vcRoot" >> $env:GITHUB_ENV
+          "SDK_INCLUDE=$sdkInclude" >> $env:GITHUB_ENV
+          "SDK_LIB=$sdkLib" >> $env:GITHUB_ENV
+          "PATH=$vcBin;$env:PATH" >> $env:GITHUB_ENV
+          "INCLUDE=$vcRoot\include;$sdkInclude" >> $env:GITHUB_ENV
+          "LIB=$vcRoot\lib;$sdkLib" >> $env:GITHUB_ENV
 
           $version = (& $cl.FullName 2>&1 | Out-String)
           $version
-          if ($version -notmatch '14\.00\.50727') {
+          if ($version -notmatch '14\.00\.50727\.42') {
             throw "Unexpected compiler version"
           }
+
+      - name: Fail fast on native PDB generation
+        shell: pwsh
+        run: |
+          @'
+          #include <windows.h>
+          int main(void) { return GetCurrentProcessId() == 0; }
+          '@ | Set-Content -Encoding Ascii vc8-pdb-smoke.cpp
+          cl /nologo /O2 /Zi /MD vc8-pdb-smoke.cpp /Fe:vc8-pdb-smoke.exe /link /DEBUG /PDB:vc8-pdb-smoke.pdb
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          if (!(Test-Path vc8-pdb-smoke.pdb)) { throw "VC8 did not produce a PDB" }
+
+      - name: Save verified VC8 reference toolchain
+        if: steps.cache-vc8.outputs.cache-hit != 'true'
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: C:\VC8ReferenceToolchain
+          key: vc8-reference-50727.42-msvc600-sdk-v3
 
       - name: Configure optimized symbol build
         shell: pwsh
@@ -107,6 +158,9 @@ jobs:
             -DGENZH_BUILD_ZEROHOUR=ON `
             -DGENZH_BUILD_GENERALS=OFF `
             -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_COMPILER="$env:VC8_BIN\cl.exe" `
+            -DCMAKE_CXX_COMPILER="$env:VC8_BIN\cl.exe" `
+            -DCMAKE_RC_COMPILER="$env:VC8_BIN\rc.exe" `
             -DCMAKE_C_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /Zi" `
             -DCMAKE_CXX_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /EHsc /Zi" `
             -DCMAKE_EXE_LINKER_FLAGS_RELEASE="/DEBUG /OPT:REF /OPT:ICF /MAP"
