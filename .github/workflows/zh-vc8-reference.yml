@@ -1,0 +1,116 @@
+name: Build Zero Hour VC8 reference
+
+on:
+  workflow_dispatch:
+    inputs:
+      reference_ref:
+        description: Source ref to build
+        required: true
+        default: codex/zh-vc8-reference
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  build-vc8:
+    runs-on: windows-2022
+    timeout-minutes: 60
+    steps:
+      - name: Check out reference source
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          ref: ${{ inputs.reference_ref }}
+          fetch-depth: 0
+
+      - name: Restore VS2005 toolchain
+        id: cache-vc8
+        uses: actions/cache/restore@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: C:\VS2005
+          key: vs2005-express-c388866075c1eea0de9e4455e5b46e0aa8f1cd73-v1
+
+      - name: Download pinned VS2005 Express toolchain
+        if: steps.cache-vc8.outputs.cache-hit != 'true'
+        shell: pwsh
+        run: |
+          $commit = "c388866075c1eea0de9e4455e5b46e0aa8f1cd73"
+          $base = "https://raw.githubusercontent.com/thepwrtank18/msvc2005/$commit"
+          1..5 | ForEach-Object {
+            $part = "vs2005_express.7z.{0:D3}" -f $_
+            Invoke-WebRequest -Uri "$base/$part" -OutFile $part
+          }
+          New-Item -ItemType Directory -Force C:\VS2005 | Out-Null
+          7z x vs2005_express.7z.001 -oC:\VS2005 -y
+
+      - name: Save VS2005 toolchain
+        if: steps.cache-vc8.outputs.cache-hit != 'true'
+        uses: actions/cache/save@cdf6c1fa76f9f475f3d7449005a359c84ca0f306 # v5.0.3
+        with:
+          path: C:\VS2005
+          key: vs2005-express-c388866075c1eea0de9e4455e5b46e0aa8f1cd73-v1
+
+      - name: Configure VS2005 environment
+        shell: pwsh
+        run: |
+          $cl = Get-ChildItem C:\VS2005 -Recurse -Filter cl.exe |
+            Where-Object { $_.FullName -match '\\VC\\bin\\cl.exe$' } |
+            Select-Object -First 1
+          if (!$cl) { throw "VS2005 cl.exe not found" }
+
+          $vcBin = $cl.Directory.FullName
+          $vcRoot = Split-Path $vcBin
+          $windowsHeader = Get-ChildItem C:\VS2005 -Recurse -Filter windows.h |
+            Select-Object -First 1
+          $kernelLibrary = Get-ChildItem C:\VS2005 -Recurse -Filter kernel32.lib |
+            Select-Object -First 1
+          $resourceCompiler = Get-ChildItem C:\VS2005 -Recurse -Filter rc.exe |
+            Select-Object -First 1
+          if (!$windowsHeader -or !$kernelLibrary -or !$resourceCompiler) {
+            throw "VS2005 archive is missing the Windows SDK"
+          }
+
+          $sdkInclude = $windowsHeader.Directory.FullName
+          $sdkLib = $kernelLibrary.Directory.FullName
+          $rcBin = $resourceCompiler.Directory.FullName
+          "PATH=$vcBin;$rcBin;$env:PATH" >> $env:GITHUB_ENV
+          "INCLUDE=$vcRoot\include;$sdkInclude;$env:INCLUDE" >> $env:GITHUB_ENV
+          "LIB=$vcRoot\lib;$sdkLib;$env:LIB" >> $env:GITHUB_ENV
+
+          $version = (& $cl.FullName 2>&1 | Out-String)
+          $version
+          if ($version -notmatch '14\.00\.50727') {
+            throw "Unexpected compiler version"
+          }
+
+      - name: Configure optimized symbol build
+        shell: pwsh
+        run: |
+          cmake -S . -B build/vc8 -G "NMake Makefiles" `
+            -DGENZH_BUILD_ZEROHOUR=ON `
+            -DGENZH_BUILD_GENERALS=OFF `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_C_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /Zi" `
+            -DCMAKE_CXX_FLAGS_RELEASE="/O2 /Ob2 /DNDEBUG /EHsc /Zi" `
+            -DCMAKE_EXE_LINKER_FLAGS_RELEASE="/DEBUG /OPT:REF /OPT:ICF /MAP"
+
+      - name: Build Zero Hour engine
+        shell: pwsh
+        run: cmake --build build/vc8 --target z_generals
+
+      - name: Collect reference artifacts
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force artifacts | Out-Null
+          robocopy build\vc8 artifacts *.exe *.dll *.pdb *.map /S
+          if ($LASTEXITCODE -ge 8) { exit $LASTEXITCODE }
+          $global:LASTEXITCODE = 0
+          (& cl 2>&1) | Out-File artifacts\compiler-version.txt
+          git show -s --format="%H%n%cI%n%s" HEAD | Out-File artifacts\reference-commit.txt
+
+      - name: Upload VC8 reference
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
+        with:
+          name: zh-reference-vc8-${{ github.run_id }}
+          path: artifacts
+          retention-days: 90
