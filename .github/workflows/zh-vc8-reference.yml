@@ -122,12 +122,14 @@ jobs:
           if (!$windowsHeader -or !$kernelLibrary) { throw "Win32 SDK files not found" }
           $sdkInclude = $windowsHeader.Directory.FullName
           $sdkLib = $kernelLibrary.Directory.FullName
+          $sdkBin = Join-Path (Split-Path $sdkInclude) "Bin"
+          if (!(Test-Path "$sdkBin\MIDL.EXE")) { throw "Historical MIDL.EXE not found" }
 
           "VC8_BIN=$vcBin" >> $env:GITHUB_ENV
           "VC8_ROOT=$vcRoot" >> $env:GITHUB_ENV
           "SDK_INCLUDE=$sdkInclude" >> $env:GITHUB_ENV
           "SDK_LIB=$sdkLib" >> $env:GITHUB_ENV
-          "PATH=$vcBin;$env:PATH" >> $env:GITHUB_ENV
+          "PATH=$vcBin;$sdkBin;$env:PATH" >> $env:GITHUB_ENV
           "INCLUDE=$vcRoot\include;$sdkInclude" >> $env:GITHUB_ENV
           "LIB=$vcRoot\lib;$sdkLib" >> $env:GITHUB_ENV
 
