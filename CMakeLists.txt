@@ -78,7 +78,7 @@ add_subdirectory(Dependencies/MaxSDK)
 add_subdirectory(Dependencies/SafeDisc)
 add_subdirectory(Dependencies/Utility)
 
-if (NOT IS_VS6_BUILD)
+if (NOT IS_VS6_BUILD AND (NOT MSVC OR MSVC_VERSION GREATER_EQUAL 1900))
     # Set C++ standard
     set(CMAKE_CXX_STANDARD 20)
     set(CMAKE_CXX_STANDARD_REQUIRED ON)
